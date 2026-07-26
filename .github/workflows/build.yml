@@ -29,36 +29,28 @@ on:
         description: 'URL target (untuk flow=web)'
         required: false
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # ============================================================
-      # 1. Checkout – hanya salah satu yang dijalankan
-      # ============================================================
       - name: Checkout project branch (flow=zip)
-        if: github.event.inputs.flow == 'zip'
+        if: ${{ github.event.inputs.flow == 'zip' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
 
       - name: Checkout base branch (flow=web)
-        if: github.event.inputs.flow == 'web'
+        if: ${{ github.event.inputs.flow == 'web' }}
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Setup Java & Flutter
-      # ============================================================
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      # ---- Resolve channel/version dari input flutter_version ----
       - name: Resolve Flutter version input
         id: fver
         run: |
@@ -67,17 +59,18 @@ jobs:
             "3.40.x") echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "version=3.40.0" >> "$GITHUB_OUTPUT" ;;
             "3.35.x") echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "version=3.35.0" >> "$GITHUB_OUTPUT" ;;
             "3.32.x") echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "version=3.32.0" >> "$GITHUB_OUTPUT" ;;
-            *)        echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "version=" >> "$GITHUB_OUTPUT" ;;
+            *) echo "channel=stable" >> "$GITHUB_OUTPUT"; echo "version=" >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Setup Flutter (cache aktif)
         uses: subosito/flutter-action@v2
         with:
           channel: ${{ steps.fver.outputs.channel }}
-          flutter-version: ${{ steps.fver.outputs.version }}
+          flutter-version: ${{ steps.fver.outputs.version || null }}
           cache: true
-          cache-key: flutter-:os:-:channel:-:version:-:arch:
+          cache-key: "flutter-${{ runner.os }}-${{ steps.fver.outputs.channel }}-${{ steps.fver.outputs.version }}-${{ runner.arch }}"
 
+      # ---- Cache Gradle terpisah agar build Android lebih cepat ----
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -90,14 +83,8 @@ jobs:
       - name: Flutter version info
         run: flutter --version
 
-      # ============================================================
-      # 3. WebView scaffolding (flow=web)
-      # ============================================================
       - name: Scaffold WebView project (flow=web)
-        if: github.event.inputs.flow == 'web'
-        env:
-          APP_NAME: ${{ github.event.inputs.app_name }}
-          TARGET_URL: ${{ github.event.inputs.target_url }}
+        if: ${{ github.event.inputs.flow == 'web' }}
         run: |
           flutter create --org com.buildbot --project-name webview_app .
           flutter pub add webview_flutter
@@ -142,33 +129,29 @@ jobs:
           }
           EOF
 
-          sed -i "s|{{APP_NAME}}|${APP_NAME}|g" lib/main.dart
-          sed -i "s|{{TARGET_URL}}|${TARGET_URL}|g" lib/main.dart
+          sed -i "s|{{APP_NAME}}|${{ github.event.inputs.app_name }}|g" lib/main.dart
+          sed -i "s|{{TARGET_URL}}|${{ github.event.inputs.target_url }}|g" lib/main.dart
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
 
-      # ============================================================
-      # 4. Tentukan root project (flow=zip)
-      # ============================================================
       - name: Locate project root (flow=zip)
-        if: github.event.inputs.flow == 'zip'
+        if: ${{ github.event.inputs.flow == 'zip' }}
         id: locate
         run: |
           if [ -f "pubspec.yaml" ]; then
             echo "root=." >> "$GITHUB_OUTPUT"
           else
             FOUND=$(find . -maxdepth 3 -name "pubspec.yaml" | head -n1)
-            if [ -n "$FOUND" ]; then
-              echo "root=$(dirname "$FOUND")" >> "$GITHUB_OUTPUT"
-            else
-              echo "root=." >> "$GITHUB_OUTPUT"
-            fi
+            echo "root=$(dirname "$FOUND")" >> "$GITHUB_OUTPUT"
           fi
 
-      # ============================================================
-      # 5. Auto-fix dependensi yang tidak kompatibel (flow=zip)
-      # ============================================================
+      # ---------------------------------------------------------------
+      # Auto-fix known incompatible dependencies (flow=zip)
+      # font_awesome_flutter < 11.0.0 subclass IconData yang sekarang final
+      # sejak Flutter 3.44.x (flutter/flutter#181342). Auto-fix pubspec.yaml
+      # SEBELUM pub get supaya user tidak perlu edit manual.
+      # ---------------------------------------------------------------
       - name: Auto-fix known incompatible packages (flow=zip)
-        if: github.event.inputs.flow == 'zip'
+        if: ${{ github.event.inputs.flow == 'zip' }}
         working-directory: ${{ steps.locate.outputs.root || '.' }}
         run: |
           set -e
@@ -180,13 +163,11 @@ jobs:
           fi
           echo "Selesai auto-fix pubspec.yaml"
 
-      # ============================================================
-      # 6. Flutter clean & get dependencies
-      # ============================================================
       - name: Flutter clean (Smart Build System)
         working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: flutter clean
 
+      # ---- Auto Retry: pub get dicoba ulang jika gagal karena network ----
       - name: Get dependencies (dengan auto retry + auto upgrade)
         working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: |
@@ -210,64 +191,41 @@ jobs:
 
       - name: Flutter analyze (informational, tidak menggagalkan build)
         working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
-        run: flutter analyze || true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
 
-      # ============================================================
-      # 7. Build sesuai mode (hanya untuk flow=zip)
-      # ============================================================
       - name: Build APK Debug
-        if: github.event.inputs.flow == 'zip' && github.event.inputs.build_mode == 'apk-debug'
-        working-directory: ${{ steps.locate.outputs.root }}
+        if: ${{ github.event.inputs.build_mode == 'apk-debug' }}
+        working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: flutter build apk --debug
 
       - name: Build APK Release
-        if: github.event.inputs.flow == 'zip' && github.event.inputs.build_mode == 'apk-release'
-        working-directory: ${{ steps.locate.outputs.root }}
+        if: ${{ github.event.inputs.build_mode == 'apk-release' }}
+        working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: flutter build apk --release
 
       - name: Build App Bundle (.aab)
-        if: github.event.inputs.flow == 'zip' && github.event.inputs.build_mode == 'aab'
-        working-directory: ${{ steps.locate.outputs.root }}
+        if: ${{ github.event.inputs.build_mode == 'aab' }}
+        working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: flutter build appbundle --release
 
       - name: Build Split Per ABI
-        if: github.event.inputs.flow == 'zip' && github.event.inputs.build_mode == 'split-abi'
-        working-directory: ${{ steps.locate.outputs.root }}
+        if: ${{ github.event.inputs.build_mode == 'split-abi' }}
+        working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: flutter build apk --release --split-per-abi
 
       - name: Build APK + AAB sekaligus
-        if: github.event.inputs.flow == 'zip' && github.event.inputs.build_mode == 'apk-and-aab'
-        working-directory: ${{ steps.locate.outputs.root }}
+        if: ${{ github.event.inputs.build_mode == 'apk-and-aab' }}
+        working-directory: ${{ github.event.inputs.flow == 'zip' && steps.locate.outputs.root || '.' }}
         run: |
           flutter build apk --release
           flutter build appbundle --release
 
-      # ============================================================
-      # 8. Build Web (flow=web)
-      # ============================================================
-      - name: Build Web
-        if: github.event.inputs.flow == 'web'
-        run: flutter build web --release
-
-      # ============================================================
-      # 9. Upload artifact
-      # ============================================================
-      - name: Upload build artifact (zip)
-        if: github.event.inputs.flow == 'zip'
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.inputs.job_id }}
           path: |
             **/build/app/outputs/flutter-apk/*.apk
             **/build/app/outputs/bundle/release/*.aab
-          retention-days: 1
-          if-no-files-found: warn
-
-      - name: Upload build artifact (web)
-        if: github.event.inputs.flow == 'web'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.inputs.job_id }}
-          path: build/web
           retention-days: 1
           if-no-files-found: warn
