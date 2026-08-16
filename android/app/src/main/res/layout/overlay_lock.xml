@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#CC000000"
+    android:padding="32dp">
+
+    <TextView
+        android:id="@+id/tv_lock_message"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🔒 DEVICE LOCKED\nEnter password to unlock"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:gravity="center"
+        android:layout_marginBottom="32dp"/>
+
+    <EditText
+        android:id="@+id/et_lock_password"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="textPassword"
+        android:hint="Enter password"
+        android:textColorHint="#888888"
+        android:textColor="#FFFFFF"
+        android:background="@android:drawable/editbox_background"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp"/>
+
+    <Button
+        android:id="@+id/btn_unlock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="UNLOCK"
+        android:textColor="#FFFFFF"
+        android:background="#4CAF50"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"/>
+
+    <Button
+        android:id="@+id/btn_cancel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="HIDE"
+        android:textColor="#FFFFFF"
+        android:background="#F44336"
+        android:padding="12dp"/>
+
+</LinearLayout>
