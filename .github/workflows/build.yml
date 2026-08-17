@@ -2,15 +2,42 @@ name: Flutter APK Build
 
 on:
   workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "URL ZIP source Flutter"
+        required: true
+        type: string
+
+      tag:
+        description: "Build tag"
+        required: true
+        type: string
+
+      build_type:
+        description: "Build type (release/debug)"
+        required: true
+        default: "release"
+        type: choice
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    name: Build APK Release
+    name: Build Flutter APK (${{ inputs.build_type }})
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Download Flutter Source
+        run: |
+          curl -L "${{ inputs.zip_url }}" -o source.zip
+          unzip -o source.zip
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -22,11 +49,28 @@ jobs:
       - name: Flutter Pub Get
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build Release APK
+        if: inputs.build_type == 'release'
+        run: |
+          flutter build apk --release
+
+      - name: Build Debug APK
+        if: inputs.build_type == 'debug'
+        run: |
+          flutter build apk --debug
+
+      - name: Rename APK
+        run: |
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            mv build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/flutter-apk/${{ inputs.tag }}-release.apk
+          else
+            mv build/app/outputs/flutter-apk/app-debug.apk \
+            build/app/outputs/flutter-apk/${{ inputs.tag }}-debug.apk
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: flutter-${{ inputs.build_type }}-${{ inputs.tag }}
+          path: build/app/outputs/flutter-apk/*.apk
