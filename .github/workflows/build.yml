@@ -32,9 +32,51 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Flutter Source
+        run: |
+          curl -L "${{ inputs.zip_url }}" -o source.zip
+          unzip -o source.zip
+          ls -la
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build Release APK
+        if: inputs.build_type == 'release'
+        run: flutter build apk --release
+
+      - name: Build Debug APK
+        if: inputs.build_type == 'debug'
+        run: flutter build apk --debug
+
+      - name: Rename APK
+        run: |
+          mkdir -p output
+
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+            cp build/app/outputs/flutter-apk/app-release.apk \
+            output/${{ inputs.tag }}-release.apk
+          else
+            cp build/app/outputs/flutter-apk/app-debug.apk \
+            output/${{ inputs.tag }}-debug.apk
+          fi
+
+          ls -lah output
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: flutter-${{ inputs.build_type }}-${{ inputs.tag }}
+          path: output/*.apk      - name: Download Flutter Source
         run: |
           curl -L "${{ inputs.zip_url }}" -o source.zip
           unzip -o source.zip
