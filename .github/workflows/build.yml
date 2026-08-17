@@ -16,11 +16,12 @@ on:
       build_type:
         description: "APK build type"
         required: true
-        default: "release"
+        default: "all"
         type: choice
         options:
           - debug
           - release
+          - all
 
 
 permissions:
@@ -32,9 +33,123 @@ jobs:
   build:
     name: Flutter APK (${{ inputs.build_type }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
 
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+
+      - name: Download ZIP
+        run: |
+          curl -fL "${{ inputs.zip_url }}" -o project.zip
+
+          file project.zip
+
+          if ! unzip -t project.zip >/dev/null 2>&1; then
+            echo "ZIP INVALID"
+            head -c 300 project.zip
+            exit 1
+          fi
+
+
+      - name: Extract Project
+        run: |
+          mkdir project_raw
+
+          unzip -q project.zip -d project_raw
+
+
+          PUBSPEC=$(find project_raw -name pubspec.yaml | head -1)
+
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "pubspec.yaml tidak ditemukan"
+            exit 1
+          fi
+
+
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+
+
+      - name: Flutter Pub Get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter clean
+          flutter pub get
+
+
+      # BUILD DEBUG
+      - name: Build Debug APK
+        if: inputs.build_type == 'debug' || inputs.build_type == 'all'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --debug
+
+
+      # BUILD RELEASE
+      - name: Build Release APK
+        if: inputs.build_type == 'release' || inputs.build_type == 'all'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --release
+
+
+      - name: Collect APK
+        run: |
+
+          mkdir -p output
+
+
+          if [ "${{ inputs.build_type }}" = "debug" ] || [ "${{ inputs.build_type }}" = "all" ]; then
+
+            cp \
+            $(find "${{ env.PROJECT_DIR }}" -name "app-debug.apk" | head -1) \
+            output/${{ inputs.tag }}-debug.apk
+
+          fi
+
+
+          if [ "${{ inputs.build_type }}" = "release" ] || [ "${{ inputs.build_type }}" = "all" ]; then
+
+            cp \
+            $(find "${{ env.PROJECT_DIR }}" -name "app-release.apk" | head -1) \
+            output/${{ inputs.tag }}-release.apk
+
+          fi
+
+
+          echo "=== APK OUTPUT ==="
+          ls -lah output
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: flutter-apk-${{ inputs.tag }}
+          path: output/*.apk
+          retention-days: 7
+          if-no-files-found: error
     steps:
 
       - name: Checkout
