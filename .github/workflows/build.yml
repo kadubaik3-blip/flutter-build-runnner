@@ -6,35 +6,187 @@ on:
       zip_url:
         description: "URL download ZIP project Flutter"
         required: true
+        type: string
+
       tag:
         description: "Tag build"
         required: true
+        type: string
+
       build_type:
         description: "debug / release"
         required: true
         default: "release"
+        type: choice
+        options:
+          - debug
+          - release
+
       only_analyze:
-        description: "Hanya jalankan analyze (true/false)"
+        description: "Hanya analyze (true/false)"
         required: false
         default: "false"
+        type: string
+
+
+permissions:
+  contents: write
+
 
 jobs:
   build:
+    name: Flutter APK Build (${{ inputs.build_type }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-    
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
+    timeout-minutes: 40
 
-      - name: Download ZIP project
+    steps:
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+
+      - name: Download ZIP Project
         run: |
-          echo "=== Downloading ZIP ==="
-          echo "URL: ${{ github.event.inputs.zip_url }}"
+          echo "=== Download ZIP ==="
+
+          curl -L \
+          "${{ inputs.zip_url }}" \
+          -o project.zip
+
+          echo ""
+          file project.zip
+          ls -lh project.zip
+
+          if ! unzip -t project.zip >/dev/null 2>&1; then
+            echo "❌ ZIP tidak valid"
+            echo "Isi file:"
+            head -c 300 project.zip
+            exit 1
+          fi
+
+          echo "✅ ZIP valid"
+
+
+      - name: Extract Project
+        run: |
+          mkdir project_raw
+
+          unzip -q project.zip -d project_raw
+
+          echo "=== Isi project ==="
+          ls -la project_raw
+
+
+          SUB_DIR_COUNT=$(find project_raw -maxdepth 1 -mindepth 1 -type d | wc -l)
+          FILE_COUNT=$(find project_raw -maxdepth 1 -mindepth 1 -type f | wc -l)
+
+
+          if [ "$SUB_DIR_COUNT" -eq 1 ] && [ "$FILE_COUNT" -eq 0 ]; then
+              PROJECT_DIR=$(find project_raw -maxdepth 1 -mindepth 1 -type d | head -n 1)
+          else
+              PROJECT_DIR="project_raw"
+          fi
+
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+          echo "Project:"
+          echo "$PROJECT_DIR"
+
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+
+
+      - name: Flutter Analyze
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f pubspec.yaml ]; then
+            flutter analyze || true
+          fi
+
+
+      - name: Stop Analyze Only
+        if: inputs.only_analyze == 'true'
+        run: |
+          echo "Analyze selesai"
+          exit 0
+
+
+      - name: Flutter Pub Get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter pub get
+
+
+      - name: Build APK Release
+        if: inputs.build_type == 'release'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --release
+
+
+      - name: Build APK Debug
+        if: inputs.build_type == 'debug'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --debug
+
+
+      - name: Find APK
+        run: |
+
+          APK=$(find . -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "❌ APK tidak ditemukan"
+            exit 1
+          fi
+
+          echo "APK ditemukan:"
+          echo "$APK"
+
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+
+
+      - name: Rename APK
+        run: |
+
+          mkdir output
+
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+
+            cp "${{ env.APK_PATH }}" \
+            "output/${{ inputs.tag }}-release.apk"
+
+          else
+
+            cp "${{ env.APK_PATH }}" \
+            "output/${{ inputs.tag }}-debug.apk"
+
+          fi
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: flutter-${{ inputs.build_type }}-${{ inputs.tag }}
+          path: output/*.apk
+          retention-days: 1
+          if-no-files-found: error          echo "URL: ${{ github.event.inputs.zip_url }}"
 
           curl -L \
             -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
