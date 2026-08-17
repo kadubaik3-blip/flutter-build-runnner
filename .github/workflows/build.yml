@@ -23,7 +23,7 @@ on:
           - release
 
       only_analyze:
-        description: "Hanya analyze (true/false)"
+        description: "Analyze only"
         required: false
         default: "false"
         type: string
@@ -31,10 +31,184 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 
 jobs:
   build:
+
+    name: Flutter APK (${{ inputs.build_type }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+
+      - name: Download ZIP
+        run: |
+          echo "Download:"
+          echo "${{ inputs.zip_url }}"
+
+          curl -L \
+          "${{ inputs.zip_url }}" \
+          -o project.zip
+
+          ls -lh project.zip
+          file project.zip
+
+
+          if ! unzip -t project.zip >/dev/null 2>&1
+          then
+            echo "ZIP tidak valid"
+            head -c 300 project.zip
+            exit 1
+          fi
+
+
+      - name: Extract Project
+        run: |
+
+          mkdir project_raw
+
+          unzip -q project.zip -d project_raw
+
+
+          echo "Isi:"
+          find project_raw -maxdepth 2 -type f | head -30
+
+
+          PUBSPEC=$(find project_raw -name pubspec.yaml | head -1)
+
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "pubspec.yaml tidak ditemukan"
+            exit 1
+          fi
+
+
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+          echo "Project Flutter:"
+          echo "$PROJECT_DIR"
+
+
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.5"
+          channel: stable
+          cache: true
+
+
+
+      - name: Flutter Analyze
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter analyze || true
+
+
+
+      - name: Analyze Only Stop
+        if: inputs.only_analyze == 'true'
+        run: |
+          echo "Analyze selesai"
+          exit 0
+
+
+
+      - name: Flutter Pub Get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter pub get
+
+
+
+      - name: Build Release
+        if: inputs.build_type == 'release'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --release
+
+
+
+      - name: Build Debug
+        if: inputs.build_type == 'debug'
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter build apk --debug
+
+
+
+      - name: Find APK
+        run: |
+
+          APK=$(find "${{ env.PROJECT_DIR }}" \
+          -path "*outputs/apk/*.apk" \
+          | head -1)
+
+
+          if [ -z "$APK" ]; then
+            echo "APK tidak ditemukan"
+            find . -name "*.apk"
+            exit 1
+          fi
+
+
+          echo "APK:"
+          echo "$APK"
+
+
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+
+
+
+      - name: Prepare Output
+        run: |
+
+          mkdir output
+
+
+          if [ "${{ inputs.build_type }}" = "release" ]
+          then
+
+            cp "${{ env.APK_PATH }}" \
+            "output/${{ inputs.tag }}-release.apk"
+
+          else
+
+            cp "${{ env.APK_PATH }}" \
+            "output/${{ inputs.tag }}-debug.apk"
+
+          fi
+
+
+          ls -lah output
+
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: flutter-${{ inputs.build_type }}-${{ inputs.tag }}
+          path: output/*.apk
+          retention-days: 1
+          if-no-files-found: error  build:
     name: Flutter APK Build (${{ inputs.build_type }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
