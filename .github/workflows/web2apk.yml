@@ -229,7 +229,7 @@ jobs:
         run: cd myapp && flutter build apk --release
 
       - name: Upload APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: web2apk-release
           path: myapp/build/app/outputs/flutter-apk/app-release.apk
